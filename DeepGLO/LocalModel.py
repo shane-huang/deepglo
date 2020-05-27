@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 from DeepGLO.data_loader import *
 
-use_cuda = True  #### Assuming you have a GPU ######
+use_cuda = False  #### Assuming you have a GPU ######
 
 from DeepGLO.utilities import *
 from DeepGLO.time import *
@@ -26,7 +26,7 @@ import random
 import pickle
 
 np.random.seed(111)
-torch.cuda.manual_seed(111)
+# torch.cuda.manual_seed(111)
 torch.manual_seed(111)
 random.seed(111)
 
@@ -364,6 +364,7 @@ class LocalModel(object):
             Ycov=self.Ycov,
         )
         self.val_len = val_len
+        use_cuda = False
         if use_cuda:
             self.seq = self.seq.cuda()
 
@@ -382,6 +383,7 @@ class LocalModel(object):
         tenacity: patience for early_stop
         """
         print("Training Local Model(Tconv)")
+        use_cuda = False
         if use_cuda:
             self.seq = self.seq.cuda()
         optimizer = optim.Adam(params=self.seq.parameters(), lr=self.lr)
@@ -396,6 +398,7 @@ class LocalModel(object):
             if self.test:
                 inp_test, out_target_test, _, _ = self.D.supply_test()
             current_epoch = self.D.epoch
+            use_cuda = False
             if use_cuda:
                 inp = inp.cuda()
                 out_target = out_target.cuda()
@@ -414,6 +417,7 @@ class LocalModel(object):
 
             loss_all = loss_all + [loss.cpu().item()]
             if self.test:
+                use_cuda = False
                 if use_cuda:
                     inp_test = inp_test.cuda()
                     out_target_test = out_target_test.cuda()
@@ -443,6 +447,7 @@ class LocalModel(object):
                     scount += 1
                     if scount > tenacity and early_stop:
                         self.seq = self.saved_seq
+                        use_cuda = False
                         if use_cuda:
                             self.seq = self.seq.cuda()
 
@@ -453,6 +458,7 @@ class LocalModel(object):
         inp = torch.from_numpy(data).view(1, n, m)
         inp = inp.transpose(0, 1).float()
 
+        cuda = False
         if cuda:
             inp = inp.cuda()
 
@@ -464,6 +470,7 @@ class LocalModel(object):
             covs.reshape(1, covs.shape[0], covs.shape[1]), repeats=nd, axis=0
         )
         rcovs = torch.from_numpy(rcovs).float()
+        cuda = False
         if cuda:
             rcovs = rcovs.cuda()
         return rcovs
@@ -471,6 +478,7 @@ class LocalModel(object):
     def convert_ycovs(self, data, ycovs, cuda=True):
         nd, td = data.shape
         ycovs = torch.from_numpy(ycovs).float()
+        cuda = False
         if cuda:
             ycovs = ycovs.cuda()
         return ycovs
@@ -482,6 +490,7 @@ class LocalModel(object):
     def predict_future_batch(
         self, data, covariates=None, ycovs=None, future=10, cpu=False
     ):
+        cpu = True
         if cpu:
             self.seq = self.seq.cpu()
         else:
@@ -524,9 +533,9 @@ class LocalModel(object):
                 )
             out = torch.cat((inp, output), dim=2)
         out = out[:, 0, :].view(out.size(0), 1, out.size(2))
-        out = out.cuda()
+        # out = out.cuda()
         y = self.convert_from_output(out)
-        self.seq = self.seq.cuda()
+        # self.seq = self.seq.cuda()
         return y
 
     def predict_future(
@@ -569,7 +578,7 @@ class LocalModel(object):
 
         for i in range(1, len(I) - 1):
             bdata = data[range(I[i], I[i + 1]), :]
-            self.seq = self.seq.cuda()
+            # self.seq = self.seq.cuda()
             if ycovs is not None:
                 temp = self.predict_future_batch(
                     bdata, covariates, ycovs[range(I[i], I[i + 1]), :, :], future, cpu

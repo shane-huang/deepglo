@@ -22,7 +22,7 @@ from DeepGLO.data_loader import *
 
 from sklearn.decomposition import NMF
 
-use_cuda = True  #### Assuming you have a GPU ######
+use_cuda = False  #### Assuming you have a GPU ######
 
 from DeepGLO.utilities import *
 
@@ -183,6 +183,7 @@ class DeepGLO(object):
         Xf = outX[:, -future::]
         Yn = self.Ymat[:, last_step : last_step + future]
         Yn = torch.from_numpy(Yn).float()
+        cpu = True
         if cpu:
             self.Xseq = self.Xseq.cpu()
         else:
@@ -193,6 +194,7 @@ class DeepGLO(object):
 
         Xt = torch.zeros(self.rank, future).float()
         Xn = torch.normal(Xt, 0.1)
+        cpu = True
         if not cpu:
             Xn = Xn.cuda()
         lprev = 0
@@ -214,13 +216,14 @@ class DeepGLO(object):
                 print("Recovery Loss: " + str(loss.cpu().item()))
                 lprev = loss.cpu().item()
 
-        self.Xseq = self.Xseq.cuda()
+        # self.Xseq = self.Xseq.cuda()
 
         return Xn.detach()
 
     def step_factX_loss(self, inp, out, last_vindex, last_hindex, reg=0.0):
         Xout = self.X[:, last_hindex + 1 : last_hindex + 1 + out.size(2)]
         Fout = self.F[self.D.I[last_vindex : last_vindex + out.size(0)], :]
+        use_cuda = False
         if use_cuda:
             Xout = Xout.cuda()
             Fout = Fout.cuda()
@@ -242,6 +245,7 @@ class DeepGLO(object):
     def step_factF_loss(self, inp, out, last_vindex, last_hindex, reg=0.0):
         Xout = self.X[:, last_hindex + 1 : last_hindex + 1 + out.size(2)]
         Fout = self.F[self.D.I[last_vindex : last_vindex + out.size(0)], :]
+        use_cuda = False
         if use_cuda:
             Xout = Xout.cuda()
             Fout = Fout.cuda()
@@ -266,6 +270,7 @@ class DeepGLO(object):
         Xout = self.X[:, last_hindex + 1 : last_hindex + 1 + inp.size(2)]
         for p in self.Xseq.parameters():
             p.requires_grad = False
+        use_cuda = False
         if use_cuda:
             Xin = Xin.cuda()
             Xout = Xout.cuda()
@@ -285,6 +290,7 @@ class DeepGLO(object):
         return loss
 
     def predict_future_batch(self, model, inp, future=10, cpu=True):
+        cpu = True
         if cpu:
             model = model.cpu()
             inp = inp.cpu()
@@ -355,7 +361,7 @@ class DeepGLO(object):
 
         Y = np.array(Y[ind, :].cpu().detach())
 
-        self.Xseq = self.Xseq.cuda()
+        # self.Xseq = self.Xseq.cuda()
 
         del F
 
@@ -411,6 +417,8 @@ class DeepGLO(object):
         self.D.epoch = 0
         self.D.vindex = 0
         self.D.hindex = 0
+        use_cuda = False
+        print("test", use_cuda)
         if use_cuda:
             self.Xseq = self.Xseq.cuda()
         for p in self.Xseq.parameters():
@@ -429,6 +437,7 @@ class DeepGLO(object):
             last_vindex = self.D.vindex
             last_hindex = self.D.hindex
             inp, out, vindex, hindex = self.D.next_batch(option=1)
+            use_cuda = False
             if use_cuda:
                 inp = inp.float().cuda()
                 out = out.float().cuda()
@@ -482,6 +491,7 @@ class DeepGLO(object):
                         self.X = Xbest
                         self.F = Fbest
                         self.Xseq = Xseqbest
+                        use_cuda = False
                         if use_cuda:
                             self.Xseq = self.Xseq.cuda()
                         break
@@ -493,6 +503,7 @@ class DeepGLO(object):
         self.D.hindex = 0
         Ycov = copy.deepcopy(self.Ymat[:, 0:t0])
         Ymat_now = self.Ymat[:, 0:t0]
+        use_cuda = False
         if use_cuda:
             self.Xseq = self.Xseq.cuda()
 
@@ -504,10 +515,12 @@ class DeepGLO(object):
             last_hindex = self.D.hindex
             inp, out, vindex, hindex = self.D.next_batch(option=1)
 
+            use_cuda = False
             if use_cuda:
                 inp = inp.cuda()
 
-            Xin = self.tensor2d_to_temporal(self.X[:, last_hindex : last_hindex + inp.size(2)]).cuda()
+            # Xin = self.tensor2d_to_temporal(self.X[:, last_hindex : last_hindex + inp.size(2)]).cuda()
+            Xin = self.tensor2d_to_temporal(self.X[:, last_hindex: last_hindex + inp.size(2)]).cpu()
             Xout = self.temporal_to_tensor2d(self.Xseq(Xin)).cpu()
             Fout = self.F[self.D.I[last_vindex : last_vindex + out.size(0)], :]
             output = np.array(torch.matmul(Fout, Xout).detach())

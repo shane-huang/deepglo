@@ -23,7 +23,7 @@ import pickle
 import random
 
 np.random.seed(111)
-torch.cuda.manual_seed(111)
+# torch.cuda.manual_seed(111)
 torch.manual_seed(111)
 random.seed(111)
 
@@ -105,10 +105,17 @@ def main(args):
         forward_cov=forward_cov,
     )
 
+    import time
+    start = time.time()
     DG.train_all_models(y_iters=y_iters, init_epochs=init_epochs)
+    end = time.time()
+    print("ding train time", (end - start))
 
+    # result_dic = DG.rolling_validation(
+    #     Ymat=Ymat, tau=9, n=160, bsize=100, cpu=False, alpha=0.3
+    # )
     result_dic = DG.rolling_validation(
-        Ymat=Ymat, tau=9, n=160, bsize=100, cpu=False, alpha=0.3
+        Ymat=Ymat, tau=9, n=1, bsize=100, cpu=False, alpha=0.3
     )
     print(result_dic)
 
