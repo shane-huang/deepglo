@@ -266,7 +266,9 @@ class LocalModel(object):
         lr=0.0005,
         val_len=10,
         test=True,
+        start_index=0,
         end_index=120,
+        seq_model=None,
         normalize=False,
         start_date="2016-1-1",
         freq="H",
@@ -322,13 +324,16 @@ class LocalModel(object):
         self.val_len = val_len
         self.Ymat = Ymat
         self.test = test
+        self.start_index = start_index
         self.end_index = end_index
         self.normalize = normalize
         self.kernel_size = kernel_size
         if normalize:
             Y = Ymat
-            m = np.mean(Y[:, 0 : self.end_index], axis=1)
-            s = np.std(Y[:, 0 : self.end_index], axis=1)
+            # TODO check the correctness for incremental training
+            # I don't think we need it here as we've done normalization before
+            m = np.mean(Y[:, 0: self.end_index], axis=1)
+            s = np.std(Y[:, 0: self.end_index], axis=1)
             # s[s == 0] = 1.0
             s += 1.0
             Y = (Y - m[:, None]) / s[:, None]
@@ -344,13 +349,16 @@ class LocalModel(object):
         if self.covariates is not None:
             self.num_inputs += self.covariates.shape[0]
 
-        self.seq = TemporalConvNet(
-            num_inputs=self.num_inputs,
-            num_channels=num_channels,
-            kernel_size=kernel_size,
-            dropout=dropout,
-            init=True,
-        )
+        if seq_model is not None:
+            self.seq = seq_model
+        else:
+            self.seq = TemporalConvNet(
+                num_inputs=self.num_inputs,
+                num_channels=num_channels,
+                kernel_size=kernel_size,
+                dropout=dropout,
+                init=True,
+            )
 
         self.seq = self.seq.float()
 
@@ -358,6 +366,7 @@ class LocalModel(object):
             Ymat=self.Ymat,
             vbsize=vbsize,
             hbsize=hbsize,
+            start_index=start_index,
             end_index=end_index,
             val_len=val_len,
             covariates=self.covariates,

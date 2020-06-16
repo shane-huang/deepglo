@@ -30,6 +30,7 @@ class data_loader(object):
         Ycov=None,
         vbsize=200,
         hbsize=100,
+        start_index=0,
         end_index=20000,
         val_len=30,
         shuffle=False,
@@ -42,18 +43,21 @@ class data_loader(object):
         All of the above arguments are numpy arrays
         vbsize: vertical batch size
         hbsize: horizontal batch size
-        end_index: training and validation set is only from 0:end_index
+        start_index: training and validation set from start_index:end_index in time dimension
+        end_index: training and validation set is only from start_index:end_index in time dimension
         val_len: validation length. The last 'val_len' time-points for every time-series is the validation set
         shuffle: data is shuffles if True (this is deprecated and set to False)
         """
         n, T = Ymat.shape
+
         self.vindex = 0
-        self.hindex = 0
+        self.hindex = start_index
         self.epoch = 0
         self.vbsize = vbsize
         self.hbsize = hbsize
         self.Ymat = Ymat
         self.val_len = val_len
+        self.start_index = start_index
         self.end_index = end_index
         self.val_index = np.random.randint(0, n - self.vbsize - 5)
         self.shuffle = shuffle
@@ -75,7 +79,7 @@ class data_loader(object):
         n, T = self.Ymat.shape
         if self.hindex + self.hbsize + 1 >= self.end_index:
             pr_hindex = self.hindex
-            self.hindex = 0
+            self.hindex = self.start_index
             if self.vindex + self.vbsize >= n:
                 pr_vindex = self.vindex
                 self.vindex = 0
@@ -182,3 +186,13 @@ class data_loader(object):
             inp = torch.from_numpy(in_data).float()
             out = torch.from_numpy(out_data).float()
         return inp, out, self.vindex, self.hindex
+
+    def reset(self):
+        self.epoch = 0
+        self.vindex = 0
+        self.hindex = self.start_index
+
+    def reset_Ymat(self, Ymat):
+        self.Ymat = Ymat
+        n, T = self.Ymat.shape
+        self.I = np.array(range(n))

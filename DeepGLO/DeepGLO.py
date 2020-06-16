@@ -126,6 +126,7 @@ class DeepGLO(object):
             F = torch.normal(C, 0.1)
             self.X = X.float()
             self.F = F.float()
+        self.svd = svd
         self.vbsize = vbsize
         self.hbsize = hbsize
         self.num_channels_X = num_channels_X
@@ -135,7 +136,9 @@ class DeepGLO(object):
         self.kernel_size = kernel_size
         self.lr = lr
         self.val_len = val_len
+        self.start_index = 0
         self.end_index = end_index
+        self.num_epochs = 0
         self.D = data_loader(
             Ymat=self.Ymat,
             vbsize=vbsize,
@@ -377,8 +380,140 @@ class DeepGLO(object):
         else:
             return Y
 
-    def train_Xseq(self, Ymat, num_epochs=20, early_stop=False, tenacity=3):
-        seq = self.Xseq
+    def prepare_increfit(self,
+                     Ymat_incr
+                     ):
+        # prepare internal data structures
+
+        # normalize the incremented Ymat if needed
+        if self.normalize:
+            # TODO check the correctness of this part
+            # self.s = np.std(Ymat[:, 0:end_index], axis=1)
+            # self.s[self.s == 0] = 1.0
+            # self.s += 1.0
+            # self.m = np.mean(Ymat[:, 0:end_index], axis=1)
+            Ymat_incr = (Ymat_incr - self.m[:, None]) / self.s[:, None]
+            # self.mini = np.abs(np.min(self.Ymat))
+            Ymat_incr = Ymat_incr + self.mini
+        else:
+            pass
+
+        # append the new Ymat onto the original,
+        # reset start/end index and Ymat in D
+        if self.Ymat.shape[0] != Ymat_incr.shape[0]:
+            raise RuntimeError("incremented no. of time series should have the same dimension as original")
+        n, T_incr = Ymat_incr.shape
+        # TODO how to deal with the Ymat data after end_index?
+        self.Ymat = np.concatenate((self.Ymat[:, : self.end_index], Ymat_incr), axis=1)
+        self.D.start_index = self.end_index
+        self.end_index = self.end_index + T_incr
+        self.D.end_index = self.end_index
+        self.start_index = self.D.start_index
+
+
+        # initialize the newly added X
+        n, T = self.Ymat.shape
+        t0 = self.end_index + 1
+        if t0 > T:
+            self.Ymat = np.hstack([self.Ymat, self.Ymat[:, -1].reshape(-1, 1)])
+        if self.svd:
+            # TODO whether it is correct to initialize new X this way?
+            indices = np.random.choice(self.Ymat.shape[0], self.rank, replace=False)
+            X = self.Ymat[indices, 0:t0]
+            mX = np.std(X, axis=1)
+            mX[mX == 0] = 1.0
+            X = X / mX[:, None]
+            # only append the last few X to X
+            Xn = torch.from_numpy(X[:, self.D.start_index:t0]).float()
+            self.X = torch.cat([self.X[:, :self.D.start_index], Xn], dim=1)
+            # TODO: do not refit F for now. shall we?
+            # Ft = get_model(X.transpose(), self.Ymat[:, 0:t0].transpose(), lamb=0.1)
+            # F = Ft[0].transpose()
+            # self.F = torch.from_numpy(F).float()
+        else:
+            R = torch.zeros(rank, t0).float()
+            X = torch.normal(R, 0.1).float()
+            Xn = X[:, self.D.start_index:t0]
+            self.X = torch.cat([self.X, Xn], dim=1)
+            # TODO: do not refit F for now. shall we?
+            #C = torch.zeros(n, rank).float()
+            #F = torch.normal(C, 0.1)
+            #self.F = F.float()
+
+        # fix data loader with the new Ymat
+        self.D.reset_Ymat(self.Ymat)
+
+    def train_incremental(self,
+                          Ymat_incr,
+                          init_epochs=100,
+                          alt_iters=10,
+                          alt_f_iters=300,
+                          alt_x_iters=300,
+                          y_iters=200,
+                          tenacity=7,
+                          mod=5
+                          ):
+
+        self.prepare_increfit(Ymat_incr)
+
+        print("Initializing Factors.....")
+        self.num_epochs = init_epochs
+        self.train_factors()
+
+        if alt_iters % 2 == 1:
+            alt_iters += 1
+
+        print("Starting Alternate Training.....")
+
+        for i in range(1, alt_iters):
+            if i % 2 == 0:
+                print(
+                    "--------------------------------------------Training Factors. Iter#: "
+                    + str(i)
+                    + "-------------------------------------------------------"
+                )
+                self.num_epochs = alt_f_iters
+                self.train_factors(
+                    seed=False, early_stop=True, tenacity=tenacity, mod=mod
+                )
+            else:
+                print(
+                    "--------------------------------------------Training Local Model. Iter#: "
+                    + str(i)
+                    + "-------------------------------------------------------"
+                )
+                self.num_epochs = alt_x_iters
+                T = np.array(self.X.cpu().detach())
+                self.train_Xseq(
+                    Ymat=T,
+                    seq_model=self.Xseq,
+                    start_index=self.start_index - self.val_len,
+                    end_index=self.end_index - self.val_len,
+                    num_epochs=self.num_epochs,
+                    early_stop=True,
+                    tenacity=tenacity,
+                )
+
+        print("--------- Training Local Global Hybrid Model------")
+        self.num_epochs = y_iters
+        Yseq_model = self.Yseq.seq
+        self.train_Yseq(
+            seq_model=Yseq_model,
+            start_index=self.start_index - self.val_len,
+            end_index=self.end_index - self.val_len,
+            num_epochs=y_iters,
+            early_stop=True,
+            tenacity=tenacity)
+
+    def train_Xseq(self,
+                   Ymat,
+                   seq_model=None,
+                   start_index=0,
+                   end_index=200,
+                   num_epochs=20,
+                   early_stop=False,
+                   tenacity=3):
+        seq = seq_model
         num_channels = self.num_channels_X
         kernel_size = self.kernel_size
         vbsize = min(self.vbsize, Ymat.shape[0] / 2)
@@ -388,13 +523,15 @@ class DeepGLO(object):
 
         TC = LocalModel(
             Ymat=Ymat,
+            seq_model=seq,
             num_inputs=1,
             num_channels=num_channels,
             kernel_size=kernel_size,
             vbsize=vbsize,
             hbsize=self.hbsize,
             normalize=False,
-            end_index=self.end_index - self.val_len,
+            start_index=start_index,
+            end_index=end_index,
             val_len=self.val_len,
             lr=self.lr,
             num_epochs=num_epochs,
@@ -414,9 +551,7 @@ class DeepGLO(object):
         ind=None,
         seed=False,
     ):
-        self.D.epoch = 0
-        self.D.vindex = 0
-        self.D.hindex = 0
+        self.D.reset()
         use_cuda = False
         print("test", use_cuda)
         if use_cuda:
@@ -498,8 +633,8 @@ class DeepGLO(object):
 
     def create_Ycov(self):
         t0 = self.end_index + 1
-        self.D.epoch = 0
-        self.D.vindex = 0
+        self.D.reset()
+        # TODO calculate Ycov in the full matrix, maybe only added?
         self.D.hindex = 0
         Ycov = copy.deepcopy(self.Ymat[:, 0:t0])
         Ymat_now = self.Ymat[:, 0:t0]
@@ -547,10 +682,17 @@ class DeepGLO(object):
             Ycov_wc[:, 1, self.period - 1 : :] = Ymat_now[:, 0 : -(self.period - 1)]
         return Ycov_wc
 
-    def train_Yseq(self, num_epochs=20, early_stop=False, tenacity=7):
+    def train_Yseq(self,
+                   seq_model=None,
+                   start_index=0,
+                   end_index=200,
+                   num_epochs=20,
+                   early_stop=False,
+                   tenacity=7):
         Ycov = self.create_Ycov()
         self.Yseq = LocalModel(
             self.Ymat,
+            seq_model=seq_model,
             num_inputs=1,
             num_channels=self.num_channels_Y,
             kernel_size=self.kernel_size_Y,
@@ -561,7 +703,8 @@ class DeepGLO(object):
             lr=self.lr,
             val_len=self.val_len,
             test=True,
-            end_index=self.end_index - self.val_len,
+            start_index=start_index,
+            end_index=end_index,
             normalize=False,
             start_date=self.start_date,
             freq=self.freq,
@@ -573,9 +716,15 @@ class DeepGLO(object):
 
         self.Yseq.train_model(early_stop=early_stop, tenacity=tenacity)
 
-    def train_all_models(
-        self, init_epochs=100, alt_iters=10, y_iters=200, tenacity=7, mod=5
-    ):
+    def train_all_models(self,
+                         init_epochs=100,
+                         alt_iters=10,
+                         alt_f_iters=300,
+                         alt_x_iters=300,
+                         y_iters=200,
+                         tenacity=7,
+                         mod=5
+                         ):
         print("Initializing Factors.....")
         self.num_epochs = init_epochs
         self.train_factors()
@@ -592,7 +741,7 @@ class DeepGLO(object):
                     + str(i)
                     + "-------------------------------------------------------"
                 )
-                self.num_epochs = 300
+                self.num_epochs = alt_f_iters
                 self.train_factors(
                     seed=False, early_stop=True, tenacity=tenacity, mod=mod
                 )
@@ -602,17 +751,26 @@ class DeepGLO(object):
                     + str(i)
                     + "-------------------------------------------------------"
                 )
-                self.num_epochs = 300
+                self.num_epochs = alt_x_iters
                 T = np.array(self.X.cpu().detach())
                 self.train_Xseq(
                     Ymat=T,
+                    seq_model=self.Xseq,
+                    start_index=0,
+                    end_index=self.end_index - self.val_len,
                     num_epochs=self.num_epochs,
                     early_stop=True,
                     tenacity=tenacity,
                 )
 
+        print("--------- Training Local Global Hybrid Model------")
         self.num_epochs = y_iters
-        self.train_Yseq(num_epochs=y_iters, early_stop=True, tenacity=tenacity)
+        self.train_Yseq(
+            start_index=0,
+            end_index=self.end_index - self.val_len,
+            num_epochs=y_iters,
+            early_stop=True,
+            tenacity=tenacity)
 
     def predict(
         self, ind=None, last_step=100, future=10, cpu=False, normalize=False, bsize=90
